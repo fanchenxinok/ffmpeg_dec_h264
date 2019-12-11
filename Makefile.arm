@@ -1,0 +1,29 @@
+CROSS_COMPILER = /home/joe/worksource/J721E_EVM/ti-processor-sdk-linux-automotive-j7-evm-06_01_00_05/linux-devkit/sysroots/x86_64-arago-linux/usr/bin/aarch64-linux-gnu
+CC = $(CROSS_COMPILER)-gcc
+CFLAGS = -g -O0
+
+LIBAV_PATH = /home/fanchenxin/j7/demo/libav/
+
+CLIBS = -L$(LIBAV_PATH)/libavformat -lavformat \
+	-L$(LIBAV_PATH)/libavcodec -lavcodec \
+	-L$(LIBAV_PATH)/libavutil -lavutil \
+	-L$(LIBAV_PATH)/libavresample -lavresample \
+	-L$(LIBAV_PATH)/libswscale -lswscale -pthread -lrt -lm
+
+USR_INC = /home/joe/worksource/J721E_EVM/linux-devkit/sysroots/aarch64-linux/usr/include/
+INCLUDE_DIRS = -I./ -I$(USR_INC) -I$(LIBAV_PATH)
+
+SOURCES = $(wildcard ./*.c)
+
+TARGET = dec_h264
+OBJECTS = $(patsubst %.c,%.o,$(SOURCES))
+
+$(TARGET) : $(OBJECTS)
+	$(CC) $^ -o $@ $(CLIBS)
+	
+$(OBJECTS) : %.o : %.c 
+	$(CC) -c $(CFLAGS) $< -o $@ $(INCLUDE_DIRS)
+
+.PHONY : clean
+clean:
+	rm -rf $(TARGET) $(OBJECTS)

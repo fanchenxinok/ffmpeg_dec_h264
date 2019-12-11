@@ -4,6 +4,7 @@
 #include <pthread.h>
 #include <libavformat/avformat.h>
 #include <libavutil/time.h>
+#include <libswscale/swscale.h>
 
 // In ffmpeg/doc/APIchanges:
 // 2016-04-21 - 7fc329e - lavc 57.37.100 - avcodec.h
@@ -45,12 +46,14 @@ typedef struct
 	
 	void *usr_data;
 	enBool decode_start;
+
+	struct SwsContext* sws_context;
 }stAvDecStream;
 
 static void dump_nv12_data(AVFrame *frame, int frame_number)
 {
 	#if DUMP_DEC_DATA
-	if(frame_number > 10) return;
+	if(frame_number > 5) return;
 	FILE *pf = NULL;
 	char file[64] = {'\0'};
 	sprintf(file, "./output/frame%04d.NV12", frame_number);
@@ -89,7 +92,39 @@ static void dump_nv12_data(AVFrame *frame, int frame_number)
 			pStartV += frame->linesize[2];
 		}
 		printf("Dump: %s\n", file);
+		fclose(pf);
 	}
+	#endif
+}
+
+static void dump_rgb_data(struct SwsContext* sws_context, AVFrame *frame, int frame_number)
+{
+	#if DUMP_DEC_DATA
+	if(frame_number > 5) return;
+
+	uint8_t* src_data[3], *dst_data[3];
+	int src_stride[3], dst_stride[3];
+	
+	src_data[0] = frame->data[0];
+	src_data[1] = frame->data[1];
+	src_data[2] = frame->data[2];
+	src_stride[0] = frame->linesize[0];
+	src_stride[1] = frame->linesize[1];
+	src_stride[2] = frame->linesize[2];
+
+	dst_data[0] = av_mallocz(frame->width * frame->height * 3);
+	dst_stride[0] = frame->width * 3;
+	sws_scale(sws_context, src_data, src_stride, 
+				0, frame->height,
+				dst_data, dst_stride);
+	FILE *pf = NULL;
+	char file[64] = {'\0'};
+	sprintf(file, "./output/frame%04d.rgb", frame_number);
+	pf = fopen(file, "wb+");
+	fwrite(dst_data[0], dst_stride[0] * frame->height, 1, pf);
+	printf("Dump: %s\n", file);
+	fclose(pf);
+	av_free(dst_data[0]);
 	#endif
 }
 
@@ -118,6 +153,10 @@ static int decode_packet(stAvDecStream *pAvDecStream, const AVPacket *packet) {
 		
 		if(AV_PIX_FMT_YUV420P == pAvDecStream->codec_ctx->pix_fmt) {
 			dump_nv12_data(pAvDecStream->decoding_frame[pAvDecStream->current_decodeing_frame], pAvDecStream->codec_ctx->frame_number);
+
+			if(pAvDecStream->sws_context) {
+				dump_rgb_data(pAvDecStream->sws_context, pAvDecStream->decoding_frame[pAvDecStream->current_decodeing_frame], pAvDecStream->codec_ctx->frame_number);
+			}
 		}
 		pAvDecStream->current_decodeing_frame ^= 1;
     } else if (ret != AVERROR(EAGAIN)) {
@@ -149,6 +188,10 @@ static int decode_packet(stAvDecStream *pAvDecStream, const AVPacket *packet) {
         	pAvDecStream->decoding_frame[pAvDecStream->current_decodeing_frame]->height);
 		if(AV_PIX_FMT_YUV420P == pAvDecStream->codec_ctx->pix_fmt) {
 			dump_nv12_data(pAvDecStream->decoding_frame[pAvDecStream->current_decodeing_frame], pAvDecStream->codec_ctx->frame_number);
+
+			if(pAvDecStream->sws_context) {
+				dump_rgb_data(pAvDecStream->sws_context, pAvDecStream->decoding_frame[pAvDecStream->current_decodeing_frame], pAvDecStream->codec_ctx->frame_number);
+			}
 		}
 		pAvDecStream->current_decodeing_frame ^= 1;
     }
@@ -255,7 +298,13 @@ int av_dec_init(stAvDecStream *pAvDecStream)
 	 pAvDecStream->decoding_frame[0] = av_frame_alloc();
 	 pAvDecStream->decoding_frame[1] = av_frame_alloc();
 	 pAvDecStream->current_decodeing_frame = 0;
-
+	
+	 /* 用swscale库将YUV420P转换为RGB       */
+	 pAvDecStream->sws_context = sws_getContext(1080, 1920, AV_PIX_FMT_YUV420P, 1080, 1920, AV_PIX_FMT_RGB24, SWS_BICUBIC, NULL, NULL, NULL);
+	 if (!pAvDecStream->sws_context) {
+        printf("Could not get sws context.\n");
+     }
+	 return 0;
 }
 
 void av_dec_deinit(stAvDecStream *pAvDecStream)
@@ -264,6 +313,9 @@ void av_dec_deinit(stAvDecStream *pAvDecStream)
 	avcodec_free_context(&pAvDecStream->codec_ctx);
     av_frame_free(&pAvDecStream->decoding_frame[0]);
 	av_frame_free(&pAvDecStream->decoding_frame[1]);
+	if(pAvDecStream->sws_context) {
+		sws_freeContext(pAvDecStream->sws_context);
+	}
 }
 
 void av_loop_dec_file(stAvDecStream *pAvDecStream)
